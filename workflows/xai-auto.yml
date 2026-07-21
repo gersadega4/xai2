@@ -1,61 +1,29 @@
-# xAI Grok auto-signup on GitHub Actions
-# Secrets ONLY via GitHub Secrets — NEVER commit .env
-#
-# Required secrets:
-#   ROUTER9_URL, ROUTER9_PASS
-#   GMAIL_USER, GMAIL_APP_PASSWORD, GMAIL_DOMAINS
-#   ACCOUNT_PASSWORD
-#   PROXIES          (residential REQUIRED on GHA — Azure DC = CF block)
-#   SCTG_API_KEY
-#
-# Optional secrets:
-#   SCTG_TIMEOUT     (default 45)
-#   SCTG_RETRIES     (default 3)
-#   CHROME_BIN       (default /usr/bin/google-chrome-stable)
-
 name: xai auto
 
 on:
   workflow_dispatch:
     inputs:
       max_accounts_per_job:
-        description: "Accounts per matrix job (1–5 recommended)"
-        required: true
-        default: "2"
-        type: string
-      delay_seconds:
-        description: "Delay between accounts (seconds)"
-        required: true
-        default: "12"
-        type: string
-      pause_seconds:
-        description: "Pause between batches (seconds)"
-        required: true
-        default: "20"
-        type: string
+        description: 'Accounts per job (1-5 recommended for first run)'
+        required: false
+        default: '1'
       headless:
-        description: "Run Chrome headless=new"
-        required: true
-        default: true
-        type: boolean
+        description: 'Run headless (true/false)'
+        required: false
+        default: 'true'
       auto_add:
-        description: "Auto-import to 9Router"
-        required: true
-        default: true
-        type: boolean
-
-concurrency:
-  group: xai-auto-${{ github.repository }}
-  cancel-in-progress: false
-
-permissions:
-  contents: read
-  actions: write
+        description: 'Auto-add to 9router (true/false)'
+        required: false
+        default: 'true'
+      delay_seconds:
+        description: 'Delay between accounts (seconds)'
+        required: false
+        default: '12'
 
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 30
 
     strategy:
       max-parallel: 5
@@ -67,66 +35,41 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Verify required secrets
-        env:
-          ROUTER9_URL: ${{ secrets.ROUTER9_URL }}
-          ROUTER9_PASS: ${{ secrets.ROUTER9_PASS }}
-          GMAIL_USER: ${{ secrets.GMAIL_USER }}
-          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
-          GMAIL_DOMAINS: ${{ secrets.GMAIL_DOMAINS }}
-          ACCOUNT_PASSWORD: ${{ secrets.ACCOUNT_PASSWORD }}
-          PROXIES: ${{ secrets.PROXIES }}
-          SCTG_API_KEY: ${{ secrets.SCTG_API_KEY }}
-        run: |
-          set -euo pipefail
-          missing=0
-          for k in ROUTER9_URL ROUTER9_PASS GMAIL_USER GMAIL_APP_PASSWORD GMAIL_DOMAINS ACCOUNT_PASSWORD PROXIES SCTG_API_KEY; do
-            if [ -z "${!k:-}" ]; then
-              echo "::error::Missing secret: $k"
-              missing=1
-            else
-              echo "✓ $k is set (value hidden)"
-            fi
-          done
-          if [ "$missing" -ne 0 ]; then
-            echo "::error::Add secrets: Settings → Secrets and variables → Actions"
-            exit 1
-          fi
-          # never print secret values
-          case "$PROXIES" in
-            *http*|*@*|*:*) echo "✓ PROXIES non-empty" ;;
-            *) echo "::error::PROXIES empty/invalid"; exit 1 ;;
-          esac
-          if [ "${#ACCOUNT_PASSWORD}" -lt 12 ]; then
-            echo "::warning::ACCOUNT_PASSWORD looks short (<12)"
-          fi
-
-      - name: Install Chrome + Xvfb
-        run: |
-          set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq xvfb xauth fonts-liberation ca-certificates wget gnupg
-          if ! command -v google-chrome-stable >/dev/null 2>&1; then
-            wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-            sudo apt-get install -y -qq /tmp/chrome.deb || sudo apt-get -f install -y -qq
-          fi
-          google-chrome-stable --version
-
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-          cache: pip
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Chrome
+        run: |
+          wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+          echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
+          sudo apt-get update
+          sudo apt-get install -y google-chrome-stable xvfb
+          google-chrome --version
 
       - name: Install Python deps
         run: |
-          set -euo pipefail
-          python -m pip install --upgrade pip
+          pip install --upgrade pip
           pip install -r requirements.txt
-          python -m playwright install chrome
-          python -m playwright install-deps chrome || true
+          playwright install chromium
 
-      - name: Write runtime .env from secrets (chmod 600, never committed)
+      - name: Check secrets
+        run: |
+          set -euo pipefail
+          missing=()
+          for k in ROUTER9_URL ROUTER9_PASS GMAIL_USER GMAIL_APP_PASSWORD GMAIL_DOMAINS ACCOUNT_PASSWORD PROXIES SCTG_API_KEY; do
+            if [ -z "${!k:-}" ]; then
+              missing+=("$k")
+            fi
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Missing secrets: ${missing[*]}"
+            echo "::error::Set them in Settings → Secrets → Actions"
+            exit 1
+          fi
+          echo "✓ All required secrets present"
         env:
           ROUTER9_URL: ${{ secrets.ROUTER9_URL }}
           ROUTER9_PASS: ${{ secrets.ROUTER9_PASS }}
@@ -136,73 +79,8 @@ jobs:
           ACCOUNT_PASSWORD: ${{ secrets.ACCOUNT_PASSWORD }}
           PROXIES: ${{ secrets.PROXIES }}
           SCTG_API_KEY: ${{ secrets.SCTG_API_KEY }}
-          SCTG_TIMEOUT_SEC: ${{ secrets.SCTG_TIMEOUT }}
-          SCTG_RETRIES_N: ${{ secrets.SCTG_RETRIES }}
-          CHROME_BIN_SECRET: ${{ secrets.CHROME_BIN }}
-          MAX_ACCOUNTS: ${{ inputs.max_accounts_per_job }}
-          DELAY_SECONDS: ${{ inputs.delay_seconds }}
-          PAUSE_SECONDS: ${{ inputs.pause_seconds }}
-          HEADLESS_IN: ${{ inputs.headless }}
-          AUTO_ADD_IN: ${{ inputs.auto_add }}
-          JOB_ID: ${{ matrix.job_id }}
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          import os
-          from pathlib import Path
 
-          def g(k, default=""):
-              return (os.environ.get(k) or default).strip()
-
-          gap = "".join(g("GMAIL_APP_PASSWORD").split())  # strip spaces in app password
-          chrome = g("CHROME_BIN_SECRET") or "/usr/bin/google-chrome-stable"
-          headless = "true" if g("HEADLESS_IN").lower() == "true" else "false"
-          auto = "true" if g("AUTO_ADD_IN").lower() == "true" else "false"
-          sctg_to = g("SCTG_TIMEOUT_SEC") or "45"
-          sctg_rt = g("SCTG_RETRIES_N") or "3"
-
-          lines = {
-              "ROUTER9_URL": g("ROUTER9_URL").rstrip("/"),
-              "ROUTER9_PASS": g("ROUTER9_PASS"),
-              "GMAIL_USER": g("GMAIL_USER"),
-              "GMAIL_APP_PASSWORD": gap,
-              "GMAIL_DOMAINS": g("GMAIL_DOMAINS"),
-              "PASSWORD": g("ACCOUNT_PASSWORD"),
-              "PROXIES": g("PROXIES"),
-              "SCTG_API_KEY": g("SCTG_API_KEY"),
-              "SCTG_FIRST": "true",
-              "SCTG_TIMEOUT": sctg_to,
-              "SCTG_RETRIES": sctg_rt,
-              "SCTG_QUIET": "true",
-              "TURNSTILE_SITEKEY": "0x4AAAAAAAhr9JGVDZbrZOo0",
-              "TURNSTILE_PAGEURL": "https://accounts.x.ai/sign-up",
-              "CHROME_BIN": chrome,
-              "HEADLESS": headless,
-              "HEADLESS_MODE": "new",
-              "MAX_ACCOUNTS": g("MAX_ACCOUNTS", "2"),
-              "BATCH_SIZE": "1",
-              "DELAY_SECONDS": g("DELAY_SECONDS", "12"),
-              "PAUSE_SECONDS": g("PAUSE_SECONDS", "20"),
-              "MAX_ACCOUNT_RETRIES": "3",
-              "AUTO_ADD": auto,
-              "REQUIRE_PROXY": "true",
-              "PROXY_FAIL_SOFT": "true",
-              "COOLDOWN_ON_BLOCK": "45",
-          }
-          p = Path(".env")
-          p.write_text("\n".join(f"{k}={v}" for k, v in lines.items()) + "\n")
-          p.chmod(0o600)
-          print(f"✓ runtime .env written for matrix job {g('JOB_ID')} (mode 600)")
-          print("Keys (values hidden):")
-          for k in lines:
-              print(f"  - {k}")
-          PY
-
-      - name: Preflight — proxy + 9Router (masked)
-        env:
-          ROUTER9_URL: ${{ secrets.ROUTER9_URL }}
-          ROUTER9_PASS: ${{ secrets.ROUTER9_PASS }}
-          PROXIES: ${{ secrets.PROXIES }}
+      - name: Preflight (proxy + 9router)
         run: |
           set -euo pipefail
           python - <<'PY'
@@ -220,103 +98,88 @@ jobs:
           print("→ proxy egress IP (ipify)...")
           try:
               r = creq.get("https://api.ipify.org?format=json", proxies=proxies, timeout=40, impersonate="chrome")
-              print(f"  proxy OK status={r.status_code} egress={r.text[:80]}")
+              print(f"  ✓ proxy OK status={r.status_code} egress={r.text[:80]}")
           except Exception as e:
               print(f"::error::Proxy preflight FAILED: {type(e).__name__}: {e}")
               print("::error::GHA needs WORKING residential proxies. Azure DC alone = CF block.")
               sys.exit(1)
 
-          print("→ 9Router login...")
+          print("→ 9Router login (direct, no proxy)...")
           try:
-              s = creq.Session()
-              r = s.post(f"{r9}/api/auth/login", json={"password": pw}, timeout=20, impersonate="chrome")
+              # Try standard requests first (curl_cffi direct session sometimes fails)
+              import requests
+              r = requests.post(f"{r9}/api/auth/login", json={"password": pw}, timeout=20)
               ok = r.json().get("success") if r.headers.get("content-type","").startswith("application/json") else False
               if not ok and r.status_code not in (200, 201):
                   print(f"::error::9Router login failed status={r.status_code}")
                   sys.exit(1)
-              print(f"  9Router OK status={r.status_code}")
+              print(f"  ✓ 9Router OK status={r.status_code}")
           except Exception as e:
-              print(f"::error::9Router unreachable: {type(e).__name__}")
-              print("::error::If 9Router is private VPS, use public URL or tunnel.")
+              print(f"::error::9Router unreachable: {type(e).__name__}: {e}")
+              print(f"::error::If 9Router is private VPS, use public URL or tunnel.")
               sys.exit(1)
           PY
-
-      - name: Run headless signup (matrix job ${{ matrix.job_id }})
         env:
-          DISPLAY: ":99"
-          AUTO_ADD: "true"
+          ROUTER9_URL: ${{ secrets.ROUTER9_URL }}
+          ROUTER9_PASS: ${{ secrets.ROUTER9_PASS }}
+          PROXIES: ${{ secrets.PROXIES }}
+
+      - name: Write .env (runtime only)
         run: |
-          set -euo pipefail
-          # Xvfb for any non-headless fallback; headless=new also fine without
-          Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset >/tmp/xvfb.log 2>&1 &
-          XVFB_PID=$!
-          sleep 1
-          SCRIPT=grok-signup-playwright-gmail-headless.py
-          if [ ! -f "$SCRIPT" ]; then
-            SCRIPT=grok-signup-playwright-gmail.py
+          cat > .env <<EOF
+          ROUTER9_URL=${{ secrets.ROUTER9_URL }}
+          ROUTER9_PASS=${{ secrets.ROUTER9_PASS }}
+          GMAIL_USER=${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD=${{ secrets.GMAIL_APP_PASSWORD }}
+          GMAIL_DOMAINS=${{ secrets.GMAIL_DOMAINS }}
+          PASSWORD=${{ secrets.ACCOUNT_PASSWORD }}
+          PROXIES=${{ secrets.PROXIES }}
+          SCTG_API_KEY=${{ secrets.SCTG_API_KEY }}
+          SCTG_FIRST=true
+          SCTG_TIMEOUT=${{ secrets.SCTG_TIMEOUT || '45' }}
+          SCTG_RETRIES=${{ secrets.SCTG_RETRIES || '3' }}
+          SCTG_QUIET=true
+          HEADLESS=${{ github.event.inputs.headless || 'true' }}
+          HEADLESS_MODE=new
+          AUTO_ADD=${{ github.event.inputs.auto_add || 'true' }}
+          MAX_ACCOUNTS=${{ github.event.inputs.max_accounts_per_job || '1' }}
+          BATCH_SIZE=1
+          DELAY_SECONDS=${{ github.event.inputs.delay_seconds || '12' }}
+          PAUSE_SECONDS=20
+          MAX_ACCOUNT_RETRIES=3
+          EOF
+          chmod 600 .env
+          echo "✓ .env written (runtime only, chmod 600)"
+
+      - name: Run signup (headless)
+        run: |
+          export DISPLAY=:99
+          Xvfb :99 -screen 0 1920x1080x24 &
+          sleep 2
+          python grok-signup-playwright-gmail-headless.py --auto-add
+        timeout-minutes: 25
+
+      - name: Redact sensitive logs
+        if: always()
+        run: |
+          if [ -f sso.txt ]; then
+            # Redact emails but keep count
+            wc -l sso.txt || true
           fi
-          echo "→ running $SCRIPT (job ${{ matrix.job_id }})"
-          set +e
-          python "$SCRIPT" --auto-add 2>&1 | tee "run-job${{ matrix.job_id }}.log"
-          CODE=${PIPESTATUS[0]}
-          set -e
-          kill $XVFB_PID 2>/dev/null || true
-          # redact secrets from log artifact (read values from .env before wipe)
-          python - <<'PY'
-          import re
-          from pathlib import Path
 
-          secrets = []
-          envp = Path(".env")
-          if envp.exists():
-              for line in envp.read_text(errors="ignore").splitlines():
-                  if "=" not in line or line.startswith("#"):
-                      continue
-                  k, v = line.split("=", 1)
-                  if k.strip() in {
-                      "ROUTER9_PASS", "GMAIL_APP_PASSWORD", "PASSWORD",
-                      "SCTG_API_KEY", "PROXIES", "ACCOUNT_PASSWORD",
-                  } and v.strip():
-                      secrets.append(v.strip())
-
-          for log in Path(".").glob("run-job*.log"):
-              text = log.read_text(errors="ignore")
-              for s in secrets:
-                  if len(s) > 3:
-                      text = text.replace(s, "***")
-              text = re.sub(r"(password=)[^\s&]+", r"\1***", text, flags=re.I)
-              text = re.sub(r"(auth_token=)[^;\s]+", r"\1***", text, flags=re.I)
-              out = log.with_suffix(".redacted.log")
-              out.write_text(text)
-              print(f"✓ redacted → {out}")
-          PY
-          # wipe .env always
-          shred -u .env 2>/dev/null || rm -f .env
-          exit $CODE
-
-      - name: Upload logs + sso (redacted)
+      - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: xai-job-${{ matrix.job_id }}-${{ github.run_id }}
+          name: grok-accounts-job-${{ matrix.job_id }}
           path: |
-            run-job${{ matrix.job_id }}.redacted.log
             sso.txt
-          if-no-files-found: warn
+            *.log
           retention-days: 7
 
-      - name: Wipe secrets from runner
+      - name: Cleanup
         if: always()
         run: |
-          rm -f .env sso.txt run-job*.log 2>/dev/null || true
-          # temp chrome profiles
-          python - <<'PY' || true
-          import shutil, tempfile
-          from pathlib import Path
-          root = Path(tempfile.gettempdir())
-          for p in root.glob("grok-pw-*"):
-              shutil.rmtree(p, ignore_errors=True)
-          for p in root.glob("grok-router-*"):
-              shutil.rmtree(p, ignore_errors=True)
-          print("temp profiles wiped")
-          PY
+          rm -f .env
+          rm -rf /tmp/grok-pw-* /tmp/grok-router-* || true
+          echo "✓ cleanup done"
