@@ -106,9 +106,9 @@ jobs:
 
           print("→ 9Router login (direct, no proxy)...")
           try:
-              # DIRECT connection (bypass proxy for 9router API)
-              s = creq.Session()
-              r = s.post(f"{r9}/api/auth/login", json={"password": pw}, timeout=20, impersonate="chrome")
+              # Try standard requests first (curl_cffi direct session sometimes fails)
+              import requests
+              r = requests.post(f"{r9}/api/auth/login", json={"password": pw}, timeout=20)
               ok = r.json().get("success") if r.headers.get("content-type","").startswith("application/json") else False
               if not ok and r.status_code not in (200, 201):
                   print(f"::error::9Router login failed status={r.status_code}")
@@ -116,7 +116,7 @@ jobs:
               print(f"  ✓ 9Router OK status={r.status_code}")
           except Exception as e:
               print(f"::error::9Router unreachable: {type(e).__name__}: {e}")
-              print("::error::If 9Router is private VPS, use public URL or tunnel.")
+              print(f"::error::If 9Router is private VPS, use public URL or tunnel.")
               sys.exit(1)
           PY
         env:
