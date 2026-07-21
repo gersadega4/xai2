@@ -6,7 +6,7 @@ on:
       max_accounts_per_job:
         description: 'Accounts per job (1-5 recommended for first run)'
         required: false
-        default: '2'
+        default: '1'
       headless:
         description: 'Run headless (true/false)'
         required: false
@@ -198,19 +198,6 @@ jobs:
           # Simpan di Secrets sebagai PAT_TOKEN
           GH_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
-          # Safety: max 20 runs per hari (GHA limit ~1440 menit/hari ÷ 30 menit ≈ 48 max)
-          # Cek run terakhir di hari ini
-          TODAY=$(date -u +%Y-%m-%d)
-          RUNS_TODAY=$(gh run list --workflow="xai auto" --created="$TODAY" --json conclusion --jq 'length')
-          
-          echo "→ Runs today: $RUNS_TODAY"
-          
-          if [ "$RUNS_TODAY" -ge 20 ]; then
-            echo "⚠️  Safety limit reached: $RUNS_TODAY runs today (max 20)"
-            echo "::warning::Daily limit reached. Stop auto-trigger. Manual run tomorrow."
-            exit 0
-          fi
-          
           echo "→ Trigger next run..."
           gh workflow run "xai auto" --ref main
           echo "✓ Next run triggered"
