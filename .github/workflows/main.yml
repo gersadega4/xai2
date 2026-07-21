@@ -6,7 +6,7 @@ on:
       max_accounts_per_job:
         description: 'Accounts per job (1-5 recommended for first run)'
         required: false
-        default: '1'
+        default: '2'
       headless:
         description: 'Run headless (true/false)'
         required: false
